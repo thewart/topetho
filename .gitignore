@@ -1,4 +1,5 @@
-Notebooks/inbreedreport_cache/
+Notebooks/*_cache/
+Notebooks/*_files/
 Notebooks/.*
 *.rda
 *.hpp
