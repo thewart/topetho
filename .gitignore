@@ -1,0 +1,6 @@
+Notebooks/inbreedreport_cache/
+Notebooks/.*
+*.rda
+*.hpp
+*.pdf
+*.swp
