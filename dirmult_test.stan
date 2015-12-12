@@ -11,23 +11,23 @@ functions {
 	}
 }
 data {
-	int n;		//number of observations
-	int K;		//number of clusters
-	int mp;		//number of state variables
-	int s[mp];	//number of states
+	int n;					//number of observations
+	int K;					//number of clusters
+	int mp;					//number of state variables
+	int s[mp];				//number of states
 	
-	int Xp[n,sum(s)];	//state occupation counts in seconds
+	int Xp[n,sum(s)];			//state occupation counts in seconds
 }
 
 parameters {
-	real<lower=0> lambda[K];	//unnormalized cluster weights
+	real<lower=0> lambda[K];		//unnormalized cluster weights
 	real<lower=0> alpha_raw[K,sum(s)];	//unnormalized dirichlet parameters
-	real<lower=0> A[K,mp];		//inverse sum of alphas
+	real<lower=0> A[K,mp];			//inverse sum of alphas
 }
 
 transformed parameters {
-	real<lower=0> alpha[K,sum(s)];	//dirichlet parameters
-	simplex[K] pi;			//cluster membership probabilities
+	real<lower=0> alpha[K,sum(s)];		//dirichlet parameters
+	simplex[K] pi;				//cluster membership probabilities
 	
 	for (k in 1:K) {
 		int pos;
