@@ -19,6 +19,6 @@ for (i in 1:n)
   X2[i,] <- rmultinom(1,10,p[i,])
 X <- cbind(X,X2)
 
-standat <- list(mp=2,s=c(length(a),length(a2)),n=n,K=10,Xp=X)
-moo <- stan(file="~/code/topetho/dirmult_test.stan",data=standat,iter=20,warmup=20,
+standat <- list(mp=2,s=c(length(a),length(a2)),n=n,K=1,Xp=X)
+moo <- stan(file="~/code/topetho/dirmult_test.stan",data=standat,iter=200,warmup=100,
             chains=1,control=list(adapt_delta=0.65))
