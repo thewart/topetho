@@ -1,0 +1,168 @@
+---
+title: "Ethological topic modeling pt 3"
+author: "Seth Madlon-Kay"
+date: "December 16, 2015"
+output: pdf_document
+---
+```{r global_options, include=FALSE}
+knitr::opts_chunk$set(warning=FALSE, message=FALSE)
+```
+```{r, echo=FALSE}
+library(rstan)
+library(data.table)
+source("~/code/topetho/parsefocaldata.R")
+source('~/code/topetho/munging.R')
+load("~/analysis/topetho/bigfit.Rdat")
+load("~/analysis/topetho/dirfit_decs.Rdat")
+```
+#Recap and intro
+
+At the last update I was trying different methods for dealing with the state data. The conceptually simpler method was to discritize the continuous times spent in each state into number of seconds spent in each state, and model those as dirichlet multinomials. The second, more complex option was to model them as continuous-time markov chain monte-carlo chains. This involves many more parameters, and I was concerned that it might also be too sensitive to precise timing information.
+
+Long story short, the dirichlet-multinomial model seemed to perform worse than the CTMC, in that it did seem to yeild consistently identifiable clusters (also known as the identifiability problem) and required a lot of clusters to model the data (13 or so for just one state variable). However, I wanted to try a coarser discritization, using units of 10 seconds, thinking that this would make the model less sensitive to small, not particularly relevant differences.
+
+#Decasecond discritization
+
+We begin today's journey by examining a two chains run using that method. First let's the traceplots of the cluster weight parameters.
+
+```{r,fig.height=7,fig.width=9}
+stan_trace(dirfit_idecs,pars="pi",inc_warmup = T)
+```
+
+This looks pretty good. Lots of values stuck at 0, and weights with non-zero weight seem stable. The only disquiting aspect is that weights at zero sometime try to leap up to small-but-non-negligible values. I think that's just the nature of the beast though.
+
+Next we'll quickly look to see whether the two chains arrived at the same solution by comparing the overall distribution of weights to see if they line up.
+
+```{r,fig.height=3}
+fit <- dirfit_idecs
+piplt <- rbind(melt(as.data.table(extract(fit,pars="pi",permuted=F)[,1,]))[,chain:=1],
+melt(as.data.table(extract(fit,pars="pi",permuted=F)[,2,]))[,chain:=2])
+
+ggplot(piplt[,mean(value),by=.(variable,chain)],aes(x=V1)) + geom_histogram() +
+  facet_grid(chain~.) + xlab("weight (posterior mean)")
+```
+
+```{r,fig.height=3}
+ggplot(piplt[value>0.04],aes(x=value,color=variable)) + geom_density() +
+  facet_grid(chain~.,scales = "free_y") + theme_classic() +
+  theme(legend.position="none") + xlab("weight")
+```
+
+This looks pretty good to me. Both chains have 12 clusters with zero weight, and among the 8 non-zero clusters the posteriors seem to have not just similar locations but also widths.
+
+For brevity's sake I will not plot the dir-mult parameters of the chains; basically they qualitatively similar to the results obtained when units of seconds are used (see the slides from the previous presentation) but it uses fewer clusters to span the same space.
+
+#By our powers combined!
+
+Now I shall attempt to combine all the state variables and the count variables into a single model (may god have mercy on my soul). I note, for the sake of giving myself credit, that this involved extending the state model code to accept arbitrary numbers of state variables, each of which was of arbitrary dimensionality. The code for the full model is preserved for posterity in the appendix below. And, you know, on github.
+
+```{r,cache=TRUE}
+#load scripts and data
+basepath <- "~/Dropbox/focaldata_processed/"
+fpath <- paste0(basepath,c("F2013/Txtexports_all_processed.csv"))
+                           
+bdat <- fread(fpath)
+bdat <- copy(bdat[!overtime & !BadObs])
+
+#construct state data
+statetho <- list(act=c("Rest","GroomGIVE","GroomGET","Feed","Travel"),
+                 corr=c("OutCorral","InCorral"),
+                 passetho=c("nopascon","passcont"),
+                 inf=c("NoGrmInf","GromInf"))
+ss <- sapply(statetho,length)
+sdat <- lapply(statetho,statprep,dat=bdat)
+sdat <- unlist(lapply(sdat,as.vector)) %>% matrix(ncol=sum(sapply(statetho,length)))
+
+#construct point data
+ptetho <- c("Scratch","SelfGrm","Vigilnce","threat","Approach","Leave","noncontactAgg",
+            "InsptInf","avoid","FearGrm","AffVoc","contactAgg","displace","Submit",
+            "GrmTerm","GrmPrsnt","ChinThrst")
+
+Xc <- countprep(ptetho,bdat)
+```
+```
+standat <- list(n=nrow(Xc),mc=length(ptetho),mp=length(statetho),
+                s=ss,Xp=sdat,Xc=unlist(Xc),K=1,n0=1)
+
+init <- stan(file="~/code/topetho/topetho.stan",data=standat,
+            iter=100,chains=1,cores = 1,control=list(adapt_delta=0.6))
+K <- 20
+init <- list(theta_p_raw=summary(init)$summary[2:(sum(ss)+1),1] %>% 
+               matrix(nrow=K,ncol=sum(ss),byrow = T),
+             A=summary(init)$summary[(sum(ss)+2):(sum(ss)+1+length(statetho)),1] %>% 
+               matrix(nrow=K,ncol=length(statetho),byrow=T),
+             theta_c=summary(init)$summary[
+                (sum(ss)+2+length(statetho)):(sum(ss)+1+length(statetho)+length(ptetho)),1] %>%
+               matrix(nrow=K,ncol=length(ptetho),byrow=T),
+             lambda=rep(1,K))
+standat$K <- K
+bigfit <- stan("~/code/topetho/topetho.stan",data = standat,chains = 2,
+            init = list(init,init),iter = 200,cores = 2,
+            control=list(adapt_delta=0.5,max_treedepth=8))
+```
+
+I have commented out the actual running of the model because it is very slow, and instead I just load the results from disk.
+
+First thing to note is that this took a very long time to run -- about 20 hours. In order to get it to run even that quickly I had to set the "adapt delta" and "max treedepth" parameters of the algorithm to values that force it to go faster but may lead to crappier inference. We shall see how crappy below!
+
+Again we start just be examining the traceplots of the cluster weights.
+
+```{r, echo=FALSE, fig.height=7,fig.width=9}
+stan_trace(bigfit,pars="pi",inc_warmup = T)
+```
+
+It looks... pretty good actually! If you look closely you can see that the chains are slightly wigglier than in the previous plots, likely as a result of me forcing the algorithm to go faster. But still, quite stable.
+
+Again, let's look to see consistency across chains.
+
+```{r, echo=FALSE,fig.height=3}
+fit <- bigfit
+piplt <- rbind(melt(as.data.table(extract(fit,pars="pi",permuted=F)[,1,]))[,chain:=1],
+melt(as.data.table(extract(fit,pars="pi",permuted=F)[,2,]))[,chain:=2])
+
+ggplot(piplt[,mean(value),by=.(variable,chain)],aes(x=V1)) + geom_histogram() +
+  facet_grid(chain~.) + xlab("weight (posterior mean)")
+```
+
+```{r,echo=FALSE,fig.height=3}
+ggplot(piplt[value>0.05],aes(x=value,color=variable)) + geom_density() +
+  facet_grid(chain~.,scales = "free_y") + theme_classic()+
+  theme(legend.position="none") + xlab("weight")
+```
+
+Hmm. The two chains find 8 and 9 empty clusters respectively, and the non-zero clusters don't line up super well. This might be an identifiability issue, where you can find different sets of clusters that have basically identical implications for the data, or it could be that the chains just arrived at different local modes. 
+
+We can get some idea of what's going on by looking at the joint log probabilities of the different chains. If the two chains have different clusters but the same log probability, then that suggests identifiability problems. If they have different probabilities, then... well, we *could* still have identifiability problems, or we might just have a highly multimodal posterior.
+
+```{r,fig.height=2}
+stan_trace(bigfit,pars="lp__",inc_warmup = T)
+```
+
+Good news! One mode is clealy much better than the other. It's hard to tell in this plot, but the average log probability difference is `r mean(extract(bigfit,"lp__",permute=F)[,1,1]-extract(bigfit,"lp__",permute=F)[,2,1])`, or, on the probability scale, chain 1 is $`r mean(exp(extract(bigfit,"lp__",permute=F)[,1,1]-extract(bigfit,"lp__",permute=F)[,2,1]))`$ times more likely than the other chain. So we may have an identifiability problem, but it's not manifest here.
+
+Let's try examining the content of the clusters. First some rigamarole to extract and organize the relevant data:
+
+```{r,fig.height=9,fig.width=10}
+moo <- clustercontent(bigfit,"theta_p",statetho,"theta_c",colnames(Xc),
+                      exclude = c("OutCorral","nopascon","NoGrmInf"),chain=1)
+ggplot(moo[cluster %in% moo[,mean(weight)>0.1,by=cluster][V1==T,cluster]],
+       aes(x=value,colour=cluster)) + geom_density() + 
+  facet_wrap(~variable,scales = "free") + ggtitle("large clusters") + theme_classic()
+```
+
+```{r, fig.height=9,fig.width=10}
+ggplot(moo[cluster %in% moo[,mean(weight)<0.1,by=cluster][V1==T,cluster]]
+       ,aes(x=value,colour=cluster)) + geom_density() +
+  facet_wrap(~variable,scales = "free") + theme_classic() + ggtitle("small clusters")
+```
+
+That's, uh... that's a lot of stuff. I do not know how to parse this much visual information.
+
+#The future
+
+On the whole, I'm quite pleased with how this is turning out. 12 clusters is a lot to parse, but I think it's within the realm of amounts of stuff we can wrap our heads around (though note that I have yet to split point behaviors into giving vs receiving or winning vs losing, which will be very important and may cause some clusters to split). Inference is slow but still within the bounds of feasibility.
+
+There are two foundational issues that I think need to be worked out before we go much further. First is about computation. Ideally what we would like to do is run the model many times from many different starting points so that we find the best possible "local maxima", or in this case configuration of clusters. This isn't feasible if it takes 20 hours to fit a model (and it will take longer when we start using all the data, not just one year). One option worth looking into is variational inference to find good approximations, which we then use as starting points for sampling-based inference. Luckily, STAN has black-box variational inference baked right in. It's worth playing around with it to see how well it performs on our data, and if it might be feasible for using it to do large-scale searches.
+
+Second, I need to figure out better ways to visualize the contents of the clusters. The method I've been using just gets too overwhelming when there's more than a handful of behaviors and states involved. This is going to be critical in convincing primatologists of the utility of this type of method.
+
