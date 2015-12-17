@@ -35,3 +35,11 @@ statprep <- function(stat,dat,maxsec=630,nsec=10,ctmc=F) {
   }
   return(out)
 }
+
+countprep <- function(behav,dat) {
+  
+  pt <- dat[,length(EventName),by=c("Observation","Behavior")]
+  pt <- dcast.data.table(pt,Observation ~ Behavior,fill=0)
+  pt <- pt[,which(names(pt) %in% behav),with=F]
+  return(as.matrix(pt))
+}

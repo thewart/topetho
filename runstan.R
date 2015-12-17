@@ -20,8 +20,7 @@ sdat <- unlist(lapply(sdat,as.vector)) %>% matrix(ncol=sum(sapply(statetho,lengt
 
 #fit model
 standat <- list(mp=length(statetho),s=ss,n=nrow(sdat),K=1,Xp=sdat)
-init <- stan(file="~/code/topetho/dirmult_test.stan",data=standat,iter=40,
-             chains=1,cores = 1)
+init <- stan(file="~/code/topetho/dirmult_test.stan",data=standat,iter=40,chains=1,cores = 1)
 K <- 15;
 init <- list(alpha_raw=summary(init)$summary[2:(sum(ss)+1),1] %>% 
                matrix(nrow=K,ncol=sum(ss),byrow = T),
@@ -33,23 +32,24 @@ dirfit <- stan(file="~/code/topetho/dirmult_test.stan",data=standat,iter=200,
             init = list(init,init),chains=2,control=list(adapt_delta=0.6),cores = 2)
 
 #construct point data
-ptetho <- c("Vigilnce","threat","Approach","Leave","noncontactAgg",
-            "avoid","FearGrm","AffVoc","contactAgg","displace","Submit")
-pt <- bdat[,length(EventName),by=c("Observation","Behavior")]
-pt <- dcast.data.table(pt,Observation ~ Behavior,fill=0)
-pt <- pt[,which(names(pt) %in% ptetho),with=F]
+ptetho <- c("Scratch","SelfGrm","Vigilnce","threat","Approach","Leave","noncontactAgg","InsptInf",
+            "avoid","FearGrm","AffVoc","contactAgg","displace","Submit","GrmTerm","GrmPrsnt","ChinThrst")
 
-Xp <- as.matrix(activ[,-1,with=F])
-Xc <- as.matrix(pt)
-#Xc <- apply(Xc,2,function(x) x/sd(x))
+Xc <- countprep(ptetho,bdat)
+standat <- list(n=nrow(Xc),mc=length(ptetho),mp=length(statetho),
+                s=ss,Xp=sdat,Xc=unlist(Xc),K=1,n0=1)
+#with(standat,stan_rdump(ls(),file ="~/analysis/topetho/dump"))
+#with(init,stan_rdump(ls(),file ="~/analysis/topetho/init"))
 
-standat <- list(n=nrow(Xc),mc=length(ptetho),
-                #mp=length(actetho),Xp=unlist(Xp),
-                Xc=unlist(Xc),K=10,n0=1)
-with(standat,stan_rdump(ls(),file ="~/analysis/topetho/dump"))
-
-init <- with(standat,list(lambda=rep(n0/K,K),theta_c=matrix(colMeans(Xc),K,mc,byrow = T)))
-with(init,stan_rdump(ls(),file ="~/analysis/topetho/init"))
-
-foot <- stan("~/code/topetho/topetho_alt.stan",data = standat,chains = 1,
-            init = list(init),iter = 10,warmup = 10)
+init <- stan(file="~/code/topetho/topetho.stan",data=standat,iter=100,chains=1,cores = 1,control=list(adapt_delta=0.6))
+K <- 20
+init <- list(theta_p_raw=summary(init)$summary[2:(sum(ss)+1),1] %>% 
+               matrix(nrow=K,ncol=sum(ss),byrow = T),
+             A=summary(init)$summary[(sum(ss)+2):(sum(ss)+1+length(statetho)),1] %>% 
+               matrix(nrow=K,ncol=length(statetho),byrow=T),
+             theta_c=summary(init)$summary[(sum(ss)+2+length(statetho)):(sum(ss)+1+length(statetho)+length(ptetho)),1] %>%
+               matrix(nrow=K,ncol=length(ptetho),byrow=T),
+             lambda=rep(1,K))
+standat$K <- K
+bigfit <- stan("~/code/topetho/topetho.stan",data = standat,chains = 2,cores = 2,
+            init = list(init,init),iter = 200,control=list(adapt_delta=0.5,max_treedepth=8))
